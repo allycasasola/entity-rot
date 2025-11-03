@@ -1,17 +1,9 @@
 import pandas as pd
-
+import duckdb
 PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
 
-def main():
-    df = pd.read_parquet(PATH_TO_PARQUET_FILE)
-    print(df.head())
-    # Explore the data
-    print(df.columns)
-    print(df.head())
-    print(df.tail())
+# Query directly from Parquet
+duckdb.query(f"SELECT * FROM '{PATH_TO_PARQUET_FILE}' LIMIT 10").show()
 
-    print(df.shape)
-    print(df.dtypes)
-
-if __name__ == "__main__":
-    main()
+# Check schema
+duckdb.query(f"DESCRIBE SELECT * FROM '{PATH_TO_PARQUET_FILE}'").show()
