@@ -72,7 +72,7 @@ Extract entities and classify each into one of the following types:
 
 ### Additional Rules
 - Ignore all numeric or legal references (sections, ordinances, or statute citations).
-- Prefer named entities that begin with capital letters or include formal titles.
+- Exclude entities that do not have a proper name.
 - Do **not** include duplicates or repeated generic placeholders.
 - If unsure whether an entity is specific enough, **include it**.
 
@@ -81,14 +81,15 @@ Return **only** a JSON object with this exact structure:
 
 {
   "entities": [
-    {"name": "entity text here", "type": "organization"},
-    {"name": "another entity", "type": "location"}
+    {"name": "entity text here", "type": "type here"},
+    {"name": "another entity", "type": "type here"}
   ]
 }
 
 ### Text
 $content
 """)
+
 load_dotenv()
 
 
