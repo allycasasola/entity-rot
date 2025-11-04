@@ -15,10 +15,15 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 
 
+EntityType = Literal["organization", "location", "role", "event", "other"]
+
+class Entity(BaseModel):
+    name: str
+    type: EntityType
 
 class ExtractedEntities(BaseModel):
     """Schema for extracted entities from a section."""
-    entities: List[str]
+    entities: List[Entity]
     section_id: str  # always present now
 
 
@@ -36,7 +41,7 @@ class SectionRow:
 
 
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
-DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite-preview-09-2025"
+DEFAULT_MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
 
 ENTITY_EXTRACTION_PROMPT = """Extract all named entities from the following municipal code text. 
 
@@ -44,7 +49,7 @@ Include:
 - Organizations (government agencies, departments, businesses)
 - Locations (streets, buildings, geographic areas)
 - Specific roles or positions
-- Laws, regulations, or specific legal references
+- Events
 - Any other significant named entities
 
 If you are uncertain whether something qualifies as an entity, err on the side of inclusion.
