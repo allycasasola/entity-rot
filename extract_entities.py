@@ -4,10 +4,11 @@ import os
 import random
 import re
 import time
+
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
-
+from typing_extensions import Literal
 import duckdb
 import google.generativeai as genai
 from pydantic import BaseModel
