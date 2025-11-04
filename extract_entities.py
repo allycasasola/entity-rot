@@ -46,21 +46,29 @@ class SectionRow:
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
 DEFAULT_MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
 
-ENTITY_EXTRACTION_PROMPT = """Extract all named entities from the following municipal code text. 
+ENTITY_EXTRACTION_PROMPT = """Extract all named entities from the following municipal code text and classify each by type.
 
-Include:
-- Organizations (government agencies, departments, businesses)
-- Locations (streets, buildings, geographic areas)
-- Specific roles or positions
-- Events
-- Any other significant named entities
+For each entity, provide:
+1. "name": the entity text
+2. "type": one of these categories:
+   - "organization": government agencies, departments, businesses, committees
+   - "location": streets, buildings, geographic areas, addresses
+   - "role": specific positions, titles, or roles (e.g., "mayor", "city clerk")
+   - "event": named events, meetings, or occasions
+   - "other": any other significant named entities
 
-If you are uncertain whether something qualifies as an entity, err on the side of inclusion.
+If uncertain whether something is an entity, include it. If unsure about the type, use "other".
 
 Text:
 {content}
 
-Return your response as a JSON object with a single key "entities" containing a list of extracted entity strings."""
+Return ONLY a JSON object with this exact structure:
+{{
+  "entities": [
+    {{"name": "entity text here", "type": "organization"}},
+    {{"name": "another entity", "type": "location"}}
+  ]
+}}"""
 
 load_dotenv()
 
@@ -195,19 +203,60 @@ def extract_entities_from_content(
     prompt = ENTITY_EXTRACTION_PROMPT.format(content=content)
     try:
         resp = _with_retries(lambda: model.generate_content(prompt))
-        parsed = json.loads(resp.text)  # JSON-mode: resp.text is valid JSON
-        entities_list = parsed.get("entities", [])
-        entities_list = _dedupe_preserve_order(entities_list)
 
-        # Convert string entities to Entity objects with default type "other"
-        entity_objects = [
-            Entity(name=entity_str, type="other") for entity_str in entities_list
-        ]
+        # Clean response text
+        response_text = resp.text.strip()
+
+        # Remove markdown code blocks if present
+        if response_text.startswith("```json"):
+            response_text = response_text[7:].strip()
+        elif response_text.startswith("```"):
+            response_text = response_text[3:].strip()
+
+        if response_text.endswith("```"):
+            response_text = response_text[:-3].strip()
+
+        # Parse JSON
+        parsed = json.loads(response_text)
+        entities_raw = parsed.get("entities", [])
+
+        # Process entities - handle both string and object formats
+        entity_objects = []
+        seen = set()
+
+        for entity in entities_raw:
+            if isinstance(entity, str):
+                # Old format: just a string
+                name = _normalize_entity(entity)
+                entity_type = "other"
+            elif isinstance(entity, dict):
+                # New format: object with name and type
+                name = _normalize_entity(entity.get("name", ""))
+                entity_type = entity.get("type", "other")
+
+                # Validate entity_type
+                if entity_type not in [
+                    "organization",
+                    "location",
+                    "role",
+                    "event",
+                    "other",
+                ]:
+                    entity_type = "other"
+            else:
+                continue
+
+            # Deduplicate by normalized name (case-insensitive)
+            key = name.lower()
+            if key and key not in seen:
+                seen.add(key)
+                entity_objects.append(Entity(name=name, type=entity_type))
 
         return ExtractedEntities(entities=entity_objects, section_id=section_id)
     except Exception as e:
         print(f"\nError processing section {section_id}: {e}")
-        print(f"Raw response: {resp.text if 'resp' in locals() else 'N/A'}")
+        if "resp" in locals():
+            print(f"Raw response (first 500 chars): {resp.text[:500]}")
         return ExtractedEntities(entities=[], section_id=section_id)
 
 
