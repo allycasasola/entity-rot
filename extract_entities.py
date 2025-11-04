@@ -29,6 +29,10 @@ class ExtractedEntities(BaseModel):
 
     entities: List[Entity]
     section_id: str  # always present now
+    section_heading: Optional[str] = None
+    citation: Optional[str] = None
+    hierarchy_path: Optional[str] = None
+    content: Optional[str] = None
 
 
 @dataclass
@@ -62,7 +66,7 @@ Extract entities and classify each into one of the following types:
   Exclude generic roles like “owner,” “citizen,” “employee,” “director,” “officer,” or “person in charge.”
 - **event**: Only include *specific named events or recurring meetings* (e.g., “Planning Commission Meeting,” “Special Election,” “Memorial Day”). 
   Exclude vague or generic phrases like “emergency,” “fire,” or “hearing.”
-- **other**: Only include significant named references that don’t fit the above but are *not* citations, section numbers, or internal code references.
+- **other**: Only include significant named references that don't fit the above but are *not* citations, section numbers, or internal code references.
   Exclude any references to sections, ordinances, code citations, or statute numbers (e.g., “§ 11.99,” “M.S. §§ 349.11 through 349.23,” “Ord. 85”).
 
 ### Additional Rules
@@ -84,7 +88,6 @@ Return **only** a JSON object with this exact structure:
 ### Text
 {content}
 """
-
 load_dotenv()
 
 
@@ -209,7 +212,12 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
 
 
 def extract_entities_from_content(
-    model: genai.GenerativeModel, content: str, section_id: str
+    model: genai.GenerativeModel,
+    content: str,
+    section_id: str,
+    section_heading: Optional[str] = None,
+    citation: Optional[str] = None,
+    hierarchy_path: Optional[str] = None,
 ) -> ExtractedEntities:
     """Extract entities using Gemini in JSON-mode with retries."""
     prompt = ENTITY_EXTRACTION_PROMPT.format(content=content)
@@ -264,12 +272,26 @@ def extract_entities_from_content(
                 seen.add(key)
                 entity_objects.append(Entity(name=name, type=entity_type))
 
-        return ExtractedEntities(entities=entity_objects, section_id=section_id)
+        return ExtractedEntities(
+            entities=entity_objects,
+            section_id=section_id,
+            section_heading=section_heading,
+            citation=citation,
+            hierarchy_path=hierarchy_path,
+            content=content,
+        )
     except Exception as e:
         print(f"\nError processing section {section_id}: {e}")
         if "resp" in locals():
             print(f"Raw response (first 500 chars): {resp.text[:500]}")
-        return ExtractedEntities(entities=[], section_id=section_id)
+        return ExtractedEntities(
+            entities=[],
+            section_id=section_id,
+            section_heading=section_heading,
+            citation=citation,
+            hierarchy_path=hierarchy_path,
+            content=content,
+        )
 
 
 def load_existing_results(path: Path) -> List[ExtractedEntities]:
@@ -314,7 +336,10 @@ def process_city(
             return
 
     # Output file
-    output_file = output_dir / f"{city_name.lower().replace(' ', '_')}_entities_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    output_file = (
+        output_dir
+        / f"{city_name.lower().replace(' ', '_')}_entities_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
 
     # Resume (optional)
     results: List[ExtractedEntities] = []
@@ -358,6 +383,9 @@ def process_city(
                 model=model,
                 content=row.content,
                 section_id=row.section_id,
+                section_heading=row.section_heading,
+                citation=row.citation,
+                hierarchy_path=row.hierarchy_path,
             )
             results.append(extracted)
             processed_section_ids.add(row.section_id)
