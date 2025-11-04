@@ -97,6 +97,18 @@ def count_city_sections(parquet_path: Path, city_name: str) -> int:
         conn.close()
 
 
+def count_city_words(parquet_path: Path, city_name: str) -> int:
+    conn = _connect_duckdb()
+    # Sum number of words in the content column for the city
+    try:
+        return conn.execute(
+            f"SELECT SUM(LENGTH(content)) FROM '{parquet_path}' WHERE city = ?",
+            [city_name]
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
 def iter_city_rows(
     parquet_path: Path,
     city_name: str,
@@ -216,10 +228,11 @@ def process_city(
 
     # Determine work size
     n_sections = count_city_sections(parquet_path, city_name)
+    n_words = count_city_words(parquet_path, city_name)
     if n_sections == 0:
         print(f"No data found for city: {city_name}")
         return
-    print(f"Found {n_sections} sections for {city_name}")
+    print(f"Found {n_sections} sections for {city_name} with {n_words} words")
 
     # Confirm if interactive is desired
     if not yes:
