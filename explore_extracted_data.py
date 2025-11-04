@@ -116,7 +116,7 @@ def print_entity_name_samples(
 
     for entity_type in sorted(entities_by_type.keys()):
         entities = entities_by_type[entity_type]
-        sample = random.sample(entities, min(20, len(entities)))
+        sample = random.sample(entities, min(100, len(entities)))
 
         print(f"\n{entity_type.upper()} ({len(entities):,} total):")
         entity_names = [e["name"] for e in sample]
