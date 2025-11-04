@@ -12,6 +12,7 @@ import duckdb
 import google.generativeai as genai
 from pydantic import BaseModel
 from tqdm import tqdm
+from dotenv import load_dotenv
 
 
 
@@ -53,7 +54,7 @@ Text:
 
 Return your response as a JSON object with a single key "entities" containing a list of extracted entity strings."""
 
-
+load_dotenv()
 
 def setup_gemini_api(model_name: str) -> genai.GenerativeModel:
     """Initialize and configure the Gemini API with JSON-mode."""
