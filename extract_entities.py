@@ -302,7 +302,7 @@ def process_city(
             return
 
     # Output file
-    output_file = output_dir / f"{city_name.lower().replace(' ', '_')}_entities.json"
+    output_file = output_dir / f"{city_name.lower().replace(' ', '_')}_entities_f{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
     # Resume (optional)
     results: List[ExtractedEntities] = []
