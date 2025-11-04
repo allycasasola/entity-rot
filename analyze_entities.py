@@ -97,7 +97,9 @@ def setup_gemini_api(model_name: str) -> genai.GenerativeModel:
         raise ValueError("Missing GEMINI_API_KEY environment variable.")
     genai.configure(api_key=api_key)
 
-    tools = [genai.protos.Tool(google_search_retrieval=genai.protos.GoogleSearchRetrieval())]
+    # Use the new google_search tool instead of google_search_retrieval
+    tools = ["google_search"]
+    
     generation_config = {
         "temperature": 0.2,
         "max_output_tokens": 8192,
