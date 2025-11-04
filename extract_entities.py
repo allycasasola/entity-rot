@@ -45,7 +45,7 @@ class SectionRow:
 
 
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
-DEFAULT_MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
+DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite-preview-09-2025"
 
 ENTITY_EXTRACTION_PROMPT = """Extract all named entities from the following municipal code text and classify each by type.
 
