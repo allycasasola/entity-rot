@@ -53,7 +53,7 @@ DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_cod
 DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite-preview-09-2025"
 
 ENTITY_EXTRACTION_PROMPT = Template("""
-You are an expert at extracting *specific named entities* from municipal code text. 
+You are an expert at extracting *specific, properly named entities* from municipal code text. 
 Your goal is to identify only *properly named and distinct entities*, not generic categories or references.
 
 ### Instructions
