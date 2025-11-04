@@ -20,12 +20,23 @@ def analyze_data(data: list[dict[str, Any]]) -> dict[str, Any]:
     """Analyze the extracted entity data."""
     total_sections = len(data)
     total_entities = 0
+    total_words = 0
+    sections_with_no_entities = 0
     entity_type_counts = Counter()
     entities_by_type = defaultdict(list)
 
     for section in data:
         entities = section.get("entities", [])
         total_entities += len(entities)
+
+        # Count sections with no entities
+        if not entities:
+            sections_with_no_entities += 1
+
+        # Count words in content
+        content = section.get("content", "")
+        if content:
+            total_words += len(content.split())
 
         for entity in entities:
             entity_name = entity.get("name", "")
@@ -47,6 +58,8 @@ def analyze_data(data: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "total_sections": total_sections,
         "total_entities": total_entities,
+        "total_words": total_words,
+        "sections_with_no_entities": sections_with_no_entities,
         "entity_type_counts": entity_type_counts,
         "entities_by_type": entities_by_type,
     }
@@ -59,13 +72,19 @@ def print_statistics(analysis: dict[str, Any]) -> None:
     print("=" * 80)
 
     print(f"\nTotal sections: {analysis['total_sections']:,}")
+    print(f"Sections with no entities: {analysis['sections_with_no_entities']:,}")
+    print(f"Total words in all sections: {analysis['total_words']:,}")
     print(f"Total entities extracted: {analysis['total_entities']:,}")
 
     print("\nEntities by type:")
     for entity_type, count in sorted(
         analysis["entity_type_counts"].items(), key=lambda x: x[1], reverse=True
     ):
-        percentage = (count / analysis["total_entities"]) * 100
+        percentage = (
+            (count / analysis["total_entities"]) * 100
+            if analysis["total_entities"] > 0
+            else 0
+        )
         print(f"  {entity_type:15s}: {count:6,} ({percentage:5.1f}%)")
 
 
