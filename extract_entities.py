@@ -158,9 +158,6 @@ def iter_city_rows(
         conn.close()
 
 
-# -----------------------------
-# Robust generation helpers
-# -----------------------------
 def _with_retries(fn, *, retries=5, base=0.5, jitter=0.25):
     """Simple exponential backoff for transient errors."""
     for i in range(retries):
@@ -303,7 +300,7 @@ def process_city(
             return
 
     # Output file
-    output_file = output_dir / f"{city_name.lower().replace(' ', '_')}_entities_f{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    output_file = output_dir / f"{city_name.lower().replace(' ', '_')}_entities_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
     # Resume (optional)
     results: List[ExtractedEntities] = []
