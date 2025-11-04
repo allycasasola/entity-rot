@@ -5,6 +5,7 @@ import random
 import re
 import time
 
+from string import Template
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
@@ -51,7 +52,7 @@ class SectionRow:
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
 DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite-preview-09-2025"
 
-ENTITY_EXTRACTION_PROMPT = """
+ENTITY_EXTRACTION_PROMPT = Template("""
 You are an expert at extracting *specific named entities* from municipal code text. 
 Your goal is to identify only *properly named and distinct entities*, not generic categories or references.
 
@@ -86,8 +87,8 @@ Return **only** a JSON object with this exact structure:
 }
 
 ### Text
-{content}
-"""
+$content
+""")
 load_dotenv()
 
 
@@ -220,7 +221,7 @@ def extract_entities_from_content(
     hierarchy_path: Optional[str] = None,
 ) -> ExtractedEntities:
     """Extract entities using Gemini in JSON-mode with retries."""
-    prompt = ENTITY_EXTRACTION_PROMPT.format(content=content)
+    prompt = ENTITY_EXTRACTION_PROMPT.substitute(content=content)
     try:
         resp = _with_retries(lambda: model.generate_content(prompt))
 
