@@ -15,15 +15,17 @@ from pydantic import BaseModel
 from tqdm import tqdm
 from dotenv import load_dotenv
 
-
 EntityType = Literal["organization", "location", "role", "event", "other"]
+
 
 class Entity(BaseModel):
     name: str
     type: EntityType
 
+
 class ExtractedEntities(BaseModel):
     """Schema for extracted entities from a section."""
+
     entities: List[Entity]
     section_id: str  # always present now
 
@@ -62,6 +64,7 @@ Return your response as a JSON object with a single key "entities" containing a 
 
 load_dotenv()
 
+
 def setup_gemini_api(model_name: str) -> genai.GenerativeModel:
     """Initialize and configure the Gemini API with JSON-mode."""
     api_key = os.getenv("GEMINI_API_KEY")
@@ -87,7 +90,6 @@ def setup_gemini_api(model_name: str) -> genai.GenerativeModel:
     )
 
 
-
 def _connect_duckdb() -> duckdb.DuckDBPyConnection:
     return duckdb.connect()
 
@@ -96,8 +98,7 @@ def count_city_sections(parquet_path: Path, city_name: str) -> int:
     conn = _connect_duckdb()
     try:
         return conn.execute(
-            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city = ?",
-            [city_name]
+            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city = ?", [city_name]
         ).fetchone()[0]
     finally:
         conn.close()
@@ -124,8 +125,7 @@ def iter_city_rows(
     conn = _connect_duckdb()
     try:
         total = conn.execute(
-            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city = ?",
-            [city_name]
+            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city = ?", [city_name]
         ).fetchone()[0]
 
         offset = 0
@@ -160,10 +160,9 @@ def _with_retries(fn, *, retries=5, base=0.5, jitter=0.25):
         except Exception as e:
             if i == retries - 1:
                 raise
-            sleep = base * (2 ** i) + random.random() * jitter
+            sleep = base * (2**i) + random.random() * jitter
             print(f"Transient error: {e} — retrying in {sleep:.2f}s")
             time.sleep(sleep)
-
 
 
 _WS = re.compile(r"\s+")
@@ -199,7 +198,13 @@ def extract_entities_from_content(
         parsed = json.loads(resp.text)  # JSON-mode: resp.text is valid JSON
         entities_list = parsed.get("entities", [])
         entities_list = _dedupe_preserve_order(entities_list)
-        return ExtractedEntities(entities=entities_list, section_id=section_id)
+
+        # Convert string entities to Entity objects with default type "other"
+        entity_objects = [
+            Entity(name=entity_str, type="other") for entity_str in entities_list
+        ]
+
+        return ExtractedEntities(entities=entity_objects, section_id=section_id)
     except Exception as e:
         print(f"\nError processing section {section_id}: {e}")
         print(f"Raw response: {resp.text if 'resp' in locals() else 'N/A'}")
@@ -254,9 +259,16 @@ def process_city(
     results: List[ExtractedEntities] = []
     processed_section_ids = set()
 
-    if output_file.exists() and (resume or (
-        not resume and input(f"Found {output_file}. Resume from existing results? (y/n): ").strip().lower() in ("y", "yes")
-    )):
+    if output_file.exists() and (
+        resume
+        or (
+            not resume
+            and input(f"Found {output_file}. Resume from existing results? (y/n): ")
+            .strip()
+            .lower()
+            in ("y", "yes")
+        )
+    ):
         try:
             results = load_existing_results(output_file)
             processed_section_ids = {r.section_id for r in results}
@@ -272,7 +284,9 @@ def process_city(
         print("All sections already processed!")
         return
 
-    print(f"\nProcessing {to_process} sections (skipping {len(processed_section_ids)} already done)...")
+    print(
+        f"\nProcessing {to_process} sections (skipping {len(processed_section_ids)} already done)..."
+    )
 
     with tqdm(total=to_process, desc=f"Extracting entities from {city_name}") as pbar:
         for row in rows_iter:
@@ -297,7 +311,6 @@ def process_city(
     save_results(results, output_file)
     print(f"\n✓ Results saved to: {output_file}")
     print(f"✓ Processed {len(results)} total sections for {city_name}")
-
 
 
 def main():
