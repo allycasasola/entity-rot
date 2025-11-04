@@ -99,12 +99,12 @@ def count_city_sections(parquet_path: Path, city_name: str) -> int:
 
 def count_city_words(parquet_path: Path, city_name: str) -> int:
     conn = _connect_duckdb()
-    # Sum number of words in the content column for the city
     try:
-        return conn.execute(
-            f"SELECT SUM(LENGTH(content)) FROM '{parquet_path}' WHERE city = ?",
-            [city_name]
-        ).fetchone()[0]
+        df = conn.execute(
+            f"SELECT content FROM '{parquet_path}' WHERE city = ?",
+            [city_name],
+        ).df()
+        return sum(len(str(c).split()) for c in df["content"].dropna())
     finally:
         conn.close()
 
