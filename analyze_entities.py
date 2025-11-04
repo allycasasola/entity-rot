@@ -97,9 +97,15 @@ def setup_gemini_api(model_name: str) -> genai.GenerativeModel:
         raise ValueError("Missing GEMINI_API_KEY environment variable.")
     genai.configure(api_key=api_key)
 
-    # Use the new google_search tool instead of google_search_retrieval
-    tools = ["google_search"]
-    
+    # Use google_search_retrieval with dynamic retrieval mode
+    tools = [
+        {
+            "google_search_retrieval": {
+                "dynamic_retrieval_config": {"mode": "MODE_DYNAMIC"}
+            }
+        }
+    ]
+
     generation_config = {
         "temperature": 0.2,
         "max_output_tokens": 8192,
@@ -135,19 +141,24 @@ def analyze_section_batch(
     sections_text = ""
     for i, section in enumerate(batch):
         entities = section.get("entities", [])
-        entity_list = "\n".join(
-            f"- {j+1}. Name: \"{e.get('name', '')}\", Type: {e.get('type', 'unknown')}"
-            for j, e in enumerate(entities)
-        ) or "(No entities)"
+        entity_list = (
+            "\n".join(
+                f"- {j+1}. Name: \"{e.get('name', '')}\", Type: {e.get('type', 'unknown')}"
+                for j, e in enumerate(entities)
+            )
+            or "(No entities)"
+        )
 
         excerpt = section.get("content", "")
         excerpt = excerpt[:500] + "..." if len(excerpt) > 500 else excerpt
-        sections_text += f"\n\n---\nSection {i+1}\n" \
-                         f"ID: {section.get('section_id')}\n" \
-                         f"Heading: {section.get('section_heading')}\n" \
-                         f"Citation: {section.get('citation')}\n" \
-                         f"Entities:\n{entity_list}\n" \
-                         f"Content excerpt: {excerpt}\n"
+        sections_text += (
+            f"\n\n---\nSection {i+1}\n"
+            f"ID: {section.get('section_id')}\n"
+            f"Heading: {section.get('section_heading')}\n"
+            f"Citation: {section.get('citation')}\n"
+            f"Entities:\n{entity_list}\n"
+            f"Content excerpt: {excerpt}\n"
+        )
 
     prompt = BATCH_ANALYSIS_PROMPT.format(
         city=city, state=state, sections_text=sections_text
@@ -180,7 +191,7 @@ def analyze_section_batch(
             return results
         except Exception as e:
             if attempt < max_retries - 1:
-                wait = 2 ** attempt + random.random()
+                wait = 2**attempt + random.random()
                 print(f"Retry {attempt+1}: {e} (wait {wait:.1f}s)")
                 time.sleep(wait)
             else:
@@ -216,7 +227,9 @@ def main():
     parser.add_argument("state")
     parser.add_argument("--output-dir", type=Path, default=Path("output/analyzed"))
     parser.add_argument("--model", default=DEFAULT_MODEL_NAME)
-    parser.add_argument("--batch-size", type=int, default=3, help="Number of sections per prompt")
+    parser.add_argument(
+        "--batch-size", type=int, default=3, help="Number of sections per prompt"
+    )
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
 
@@ -233,7 +246,9 @@ def main():
         for section in data:
             batch.append(section)
             if len(batch) >= args.batch_size:
-                batch_results = analyze_section_batch(model, batch, args.city, args.state)
+                batch_results = analyze_section_batch(
+                    model, batch, args.city, args.state
+                )
                 results.extend(batch_results)
                 batch.clear()
                 save_results(results, output_file)
