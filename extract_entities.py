@@ -14,6 +14,7 @@ import google.generativeai as genai
 from pydantic import BaseModel
 from tqdm import tqdm
 from dotenv import load_dotenv
+from datetime import datetime
 
 EntityType = Literal["organization", "location", "role", "event", "other"]
 
