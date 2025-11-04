@@ -47,29 +47,43 @@ class SectionRow:
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
 DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite-preview-09-2025"
 
-ENTITY_EXTRACTION_PROMPT = """Extract all named entities from the following municipal code text and classify each by type.
+ENTITY_EXTRACTION_PROMPT = """
+You are an expert at extracting *specific named entities* from municipal code text. 
+Your goal is to identify only *properly named and distinct entities*, not generic categories or references.
 
-For each entity, provide:
-1. "name": the entity text
-2. "type": one of these categories:
-   - "organization": government agencies, departments, businesses, committees
-   - "location": streets, buildings, geographic areas, addresses
-   - "role": specific positions, titles, or roles (e.g., "mayor", "city clerk")
-   - "event": named events, meetings, or occasions
-   - "other": any other significant named entities
+### Instructions
 
-If uncertain whether something is an entity, include it. If unsure about the type, use "other".
+Extract entities and classify each into one of the following types:
+- **organization**: Only include *specific* organizations or formally named bodies (e.g., "City of Aurora Planning and Zoning Commission", "Federal Emergency Management Agency").
+  Exclude generic terms like “city,” “board,” “department,” or “council” unless they appear as part of a *full proper name*.
+- **location**: Only include *specific proper locations* (e.g., "1st Street East", "Aurora", "St. Louis County", "I-1 Industrial Park"). 
+  Exclude generic or descriptive locations like “city,” “cemetery,” “school,” “public property,” “building,” or “hospital area.”
+- **role**: Only include *titled or uniquely identifying roles* (e.g., “City Administrator/Clerk-Treasurer,” “Planning and Zoning Official,” “State Commissioner of Public Safety”). 
+  Exclude generic roles like “owner,” “citizen,” “employee,” “director,” “officer,” or “person in charge.”
+- **event**: Only include *specific named events or recurring meetings* (e.g., “Planning Commission Meeting,” “Special Election,” “Memorial Day”). 
+  Exclude vague or generic phrases like “emergency,” “fire,” or “hearing.”
+- **other**: Only include significant named references that don’t fit the above but are *not* citations, section numbers, or internal code references.
+  Exclude any references to sections, ordinances, code citations, or statute numbers (e.g., “§ 11.99,” “M.S. §§ 349.11 through 349.23,” “Ord. 85”).
 
-Text:
-{content}
+### Additional Rules
+- Ignore all numeric or legal references (sections, ordinances, or statute citations).
+- Prefer named entities that begin with capital letters or include formal titles.
+- Do **not** include duplicates or repeated generic placeholders.
+- If unsure whether an entity is specific enough, **include it**.
 
-Return ONLY a JSON object with this exact structure:
-{{
+### Output Format
+Return **only** a JSON object with this exact structure:
+
+{
   "entities": [
-    {{"name": "entity text here", "type": "organization"}},
-    {{"name": "another entity", "type": "location"}}
+    {"name": "entity text here", "type": "organization"},
+    {"name": "another entity", "type": "location"}
   ]
-}}"""
+}
+
+### Text
+{content}
+"""
 
 load_dotenv()
 
