@@ -1,5 +1,7 @@
 """
 Analyze extracted entities using LLM with web search to assess existence (batched for cost efficiency).
+- Uses Google Search grounding via the Google GenAI SDK.
+- Returns strictly JSON (the model is configured for application/json).
 """
 
 import argparse
@@ -10,13 +12,15 @@ import time
 from pathlib import Path
 from typing import Any, List, Optional
 
-import google.generativeai as genai
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from tqdm import tqdm
 from typing_extensions import Literal
 
-# Schema definitions
+from google import genai
+from google.genai import types
+
+
 EntityType = Literal["organization", "location", "role", "event", "other"]
 NonexistenceStatus = Literal[
     "abolished", "merged", "replaced", "renamed", "dormant", "expired", "defunct"
@@ -47,15 +51,15 @@ class EvaluatedEntities(BaseModel):
     hierarchy_path: Optional[str] = None
     content: Optional[str] = None
 
+DEFAULT_MODEL_NAME = "gemini-2.5-flash"
 
-DEFAULT_MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
-
-# Note the modified prompt to support multiple sections:
+# Note the prompt supports multiple sections per request.
 BATCH_ANALYSIS_PROMPT = """You are an expert at assessing whether entities within a specific jurisdiction still exist.
 
 **Municipality:** {city}, {state}
 
 You will be given multiple municipal code sections to analyze. For EACH section, independently assess entities using Google Search grounding as needed.
+Use only reliable sources (official .gov sites preferred) and provide short quotes with URLs to justify determinations.
 
 Return a JSON list, where each element corresponds to a single section.
 
@@ -90,33 +94,29 @@ Return ONLY a JSON array of this structure:
 load_dotenv()
 
 
-def setup_gemini_api(model_name: str) -> genai.GenerativeModel:
-    """Initialize Gemini API with Google Search grounding."""
+def setup_gemini_api(model_name: str):
+    """
+    Initialize the Google GenAI client and a GenerateContentConfig
+    with Google Search grounding enabled.
+
+    Per docs, enable grounding by adding the google_search Tool to config.
+    """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("Missing GEMINI_API_KEY environment variable.")
-    genai.configure(api_key=api_key)
 
-    # Use google_search_retrieval with dynamic retrieval mode
-    tools = [
-        {
-            "google_search_retrieval": {
-                "dynamic_retrieval_config": {"mode": "MODE_DYNAMIC"}
-            }
-        }
-    ]
+    client = genai.Client(api_key=api_key)
 
-    generation_config = {
-        "temperature": 0.2,
-        "max_output_tokens": 8192,
-        "response_mime_type": "application/json",
-    }
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
 
-    return genai.GenerativeModel(
-        model_name=model_name,
-        generation_config=generation_config,
-        tools=tools,
+    config = types.GenerateContentConfig(
+        tools=[grounding_tool],
+        temperature=0.2,
+        max_output_tokens=8192,
+        response_mime_type="application/json",  # ensures JSON-only responses
     )
+
+    return client, config, model_name
 
 
 def load_data(file_path: Path) -> List[dict[str, Any]]:
@@ -131,7 +131,9 @@ def save_results(results: List[EvaluatedEntities], output_path: Path) -> None:
 
 
 def analyze_section_batch(
-    model: genai.GenerativeModel,
+    client: genai.Client,
+    config: types.GenerateContentConfig,
+    model_name: str,
     batch: List[dict[str, Any]],
     city: str,
     state: str,
@@ -148,9 +150,9 @@ def analyze_section_batch(
             )
             or "(No entities)"
         )
+        excerpt = section.get("content", "") or ""
+        excerpt = (excerpt[:500] + "...") if len(excerpt) > 500 else excerpt
 
-        excerpt = section.get("content", "")
-        excerpt = excerpt[:500] + "..." if len(excerpt) > 500 else excerpt
         sections_text += (
             f"\n\n---\nSection {i+1}\n"
             f"ID: {section.get('section_id')}\n"
@@ -167,15 +169,24 @@ def analyze_section_batch(
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = model.generate_content(prompt)
-            text = response.text.strip()
+            # ✅ New SDK calling style with config (tools) attached
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=config,
+            )
+
+            # The model is constrained to JSON via response_mime_type,
+            # but we still defensively strip code fences if any slipped in.
+            text = (response.text or "").strip()
             if text.startswith("```json"):
                 text = text[7:]
             if text.endswith("```"):
                 text = text[:-3]
+
             parsed = json.loads(text)
 
-            results = []
+            results: List[EvaluatedEntities] = []
             for section_result, original in zip(parsed, batch):
                 entities = [Entity(**e) for e in section_result.get("entities", [])]
                 results.append(
@@ -189,35 +200,41 @@ def analyze_section_batch(
                     )
                 )
             return results
-        except Exception as e:
+
+        except Exception as err:
             if attempt < max_retries - 1:
                 wait = 2**attempt + random.random()
-                print(f"Retry {attempt+1}: {e} (wait {wait:.1f}s)")
+                print(f"Retry {attempt+1}: {err} (wait {wait:.1f}s)")
                 time.sleep(wait)
             else:
-                print(f"Failed batch: {e}")
-                return [
-                    EvaluatedEntities(
-                        entities=[
+                print(f"Failed batch: {err}")
+                # Return "skipped" for each entity in each section
+                fallback_results: List[EvaluatedEntities] = []
+                for s in batch:
+                    fallback_entities: List[Entity] = []
+                    for ent in s.get("entities", []):
+                        fallback_entities.append(
                             Entity(
-                                name=e.get("name", ""),
-                                type=e.get("type", "other"),
+                                name=ent.get("name", ""),
+                                type=ent.get("type", "other"),
                                 processed="skipped",
                                 exists=None,
                                 nonexistence_status=None,
                                 citations=[],
-                                reasoning=f"Error: {str(e)}",
+                                reasoning=f"Error: {str(err)}",
                             )
-                            for e in s.get("entities", [])
-                        ],
-                        section_id=s.get("section_id"),
-                        section_heading=s.get("section_heading"),
-                        citation=s.get("citation"),
-                        hierarchy_path=s.get("hierarchy_path"),
-                        content=s.get("content"),
+                        )
+                    fallback_results.append(
+                        EvaluatedEntities(
+                            entities=fallback_entities,
+                            section_id=s.get("section_id"),
+                            section_heading=s.get("section_heading"),
+                            citation=s.get("citation"),
+                            hierarchy_path=s.get("hierarchy_path"),
+                            content=s.get("content"),
+                        )
                     )
-                    for s in batch
-                ]
+                return fallback_results
 
 
 def main():
@@ -237,8 +254,9 @@ def main():
     if args.limit:
         data = data[: args.limit]
 
-    model = setup_gemini_api(args.model)
-    results, batch = [], []
+    client, config, model_name = setup_gemini_api(args.model)
+    results: List[EvaluatedEntities] = []
+    batch: List[dict[str, Any]] = []
 
     output_file = args.output_dir / f"{args.file_path.stem}_batched.json"
 
@@ -247,7 +265,7 @@ def main():
             batch.append(section)
             if len(batch) >= args.batch_size:
                 batch_results = analyze_section_batch(
-                    model, batch, args.city, args.state
+                    client, config, model_name, batch, args.city, args.state
                 )
                 results.extend(batch_results)
                 batch.clear()
@@ -256,7 +274,9 @@ def main():
 
         # leftover batch
         if batch:
-            batch_results = analyze_section_batch(model, batch, args.city, args.state)
+            batch_results = analyze_section_batch(
+                client, config, model_name, batch, args.city, args.state
+            )
             results.extend(batch_results)
             save_results(results, output_file)
             pbar.update(len(batch))
