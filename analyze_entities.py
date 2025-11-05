@@ -20,6 +20,7 @@ from typing_extensions import Literal
 from google import genai
 from google.genai import types
 
+# TODO: Fix mimetype
 
 
 EntityType = Literal["organization", "location", "role", "event", "other"]
@@ -114,7 +115,6 @@ def setup_gemini_api(model_name: str):
         tools=[grounding_tool],
         temperature=0.2,
         max_output_tokens=8192,
-        response_mime_type="application/json",  # ensures JSON-only responses
     )
 
     return client, config, model_name
@@ -140,6 +140,7 @@ def analyze_section_batch(
     state: str,
 ) -> List[EvaluatedEntities]:
     """Analyze a batch of sections in one grounded request."""
+    breakpoint()
     # Build text for all sections in the batch
     sections_text = ""
     for i, section in enumerate(batch):
