@@ -17,8 +17,9 @@ from pydantic import BaseModel
 from tqdm import tqdm
 from typing_extensions import Literal
 
-from google import genai
-from google.genai import types
+from google import generativeai as genai
+from google.generativeai import types
+
 
 
 EntityType = Literal["organization", "location", "role", "event", "other"]
