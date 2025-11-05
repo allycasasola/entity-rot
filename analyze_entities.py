@@ -17,8 +17,8 @@ from pydantic import BaseModel
 from tqdm import tqdm
 from typing_extensions import Literal
 
-from google import generativeai as genai
-from google.generativeai import types
+from google import genai
+from google.genai import types
 
 
 
