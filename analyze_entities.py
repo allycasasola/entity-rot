@@ -135,7 +135,9 @@ def create_cached_content(
     cached_content = client.caches.create(
         model=model_name,
         config=types.CreateCachedContentConfig(
-            contents=[types.Content(parts=[types.Part(text=cached_prompt)])],
+            contents=[
+                types.Content(role="user", parts=[types.Part(text=cached_prompt)])
+            ],
             tools=[grounding_tool],
             ttl="3600s",  # Cache for 1 hour
         ),
