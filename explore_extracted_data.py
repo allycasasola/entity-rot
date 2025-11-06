@@ -24,7 +24,7 @@ def analyze_data(data: list[dict[str, Any]]) -> dict[str, Any]:
     sections_with_no_entities = 0
     entity_type_counts = Counter()
     entities_by_type = defaultdict(list)
-
+    max_words_in_section = 0
     for section in data:
         entities = section.get("entities", [])
         total_entities += len(entities)
@@ -33,10 +33,13 @@ def analyze_data(data: list[dict[str, Any]]) -> dict[str, Any]:
         if not entities:
             sections_with_no_entities += 1
 
+
         # Count words in content
         content = section.get("content", "")
         if content:
             total_words += len(content.split())
+            max_words_in_section = max(max_words_in_section, len(content.split()))
+
 
         for entity in entities:
             entity_name = entity.get("name", "")
@@ -59,6 +62,7 @@ def analyze_data(data: list[dict[str, Any]]) -> dict[str, Any]:
         "total_sections": total_sections,
         "total_entities": total_entities,
         "total_words": total_words,
+        "max_words_in_section": max_words_in_section,
         "sections_with_no_entities": sections_with_no_entities,
         "entity_type_counts": entity_type_counts,
         "entities_by_type": entities_by_type,
@@ -74,6 +78,7 @@ def print_statistics(analysis: dict[str, Any]) -> None:
     print(f"\nTotal sections: {analysis['total_sections']:,}")
     print(f"Sections with no entities: {analysis['sections_with_no_entities']:,}")
     print(f"Total words in all sections: {analysis['total_words']:,}")
+    print(f"Max words in a section: {analysis['max_words_in_section']:,}")
     print(f"Total entities extracted: {analysis['total_entities']:,}")
 
     print("\nEntities by type:")
