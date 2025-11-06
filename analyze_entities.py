@@ -20,9 +20,6 @@ from typing_extensions import Literal
 from google import genai
 from google.genai import types
 
-# TODO: Fix mimetype
-
-
 EntityType = Literal["organization", "location", "role", "event", "other"]
 NonexistenceStatus = Literal[
     "abolished", "merged", "replaced", "renamed", "dormant", "expired", "defunct"
@@ -53,10 +50,12 @@ class EvaluatedEntities(BaseModel):
     hierarchy_path: Optional[str] = None
     content: Optional[str] = None
 
+
 DEFAULT_MODEL_NAME = "gemini-2.5-flash"
 
-# Note the prompt supports multiple sections per request.
-BATCH_ANALYSIS_PROMPT = """You are an expert at assessing whether entities within a specific jurisdiction still exist.
+# Split prompt into cacheable prefix and dynamic sections
+# The prefix (everything before the sections) can be cached
+BATCH_ANALYSIS_PROMPT_PREFIX = """You are an expert at assessing whether entities within a specific jurisdiction still exist.
 
 **Municipality:** {city}, {state}
 
@@ -64,11 +63,6 @@ You will be given multiple municipal code sections to analyze. For EACH section,
 Use only reliable sources (official .gov sites preferred) and provide short quotes with URLs to justify determinations.
 
 Return a JSON list, where each element corresponds to a single section.
-
----
-
-### Sections to analyze:
-{sections_text}
 
 ---
 
@@ -91,6 +85,10 @@ Return ONLY a JSON array of this structure:
     ]
   }}
 ]
+
+---
+
+### Section(s) to analyze:
 """
 
 load_dotenv()
@@ -120,6 +118,32 @@ def setup_gemini_api(model_name: str):
     return client, config, model_name
 
 
+def create_cached_content(
+    client: genai.Client,
+    model_name: str,
+    city: str,
+    state: str,
+) -> types.CachedContent:
+    """
+    Create a cached content object for the static prompt prefix.
+    This cache can be reused across multiple batch requests.
+    """
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
+
+    cached_prompt = BATCH_ANALYSIS_PROMPT_PREFIX.format(city=city, state=state)
+
+    cached_content = client.caches.create(
+        model=model_name,
+        config=types.CreateCachedContentConfig(
+            contents=[types.Content(parts=[types.Part(text=cached_prompt)])],
+            tools=[grounding_tool],
+            ttl="3600s",  # Cache for 1 hour
+        ),
+    )
+
+    return cached_content
+
+
 def load_data(file_path: Path) -> List[dict[str, Any]]:
     with open(file_path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -136,11 +160,9 @@ def analyze_section_batch(
     config: types.GenerateContentConfig,
     model_name: str,
     batch: List[dict[str, Any]],
-    city: str,
-    state: str,
+    cached_content: Optional[types.CachedContent] = None,
 ) -> List[EvaluatedEntities]:
-    """Analyze a batch of sections in one grounded request."""
-    breakpoint()
+    """Analyze a batch of sections in one grounded request with caching."""
     # Build text for all sections in the batch
     sections_text = ""
     for i, section in enumerate(batch):
@@ -164,23 +186,30 @@ def analyze_section_batch(
             f"Content excerpt: {excerpt}\n"
         )
 
-    prompt = BATCH_ANALYSIS_PROMPT.format(
-        city=city, state=state, sections_text=sections_text
-    )
-
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # ✅ New SDK calling style with config (tools) attached
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=config,
-            )
+            # Use cached content if available
+            # response is GenerateContentResponse, not plain text
+            if cached_content:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=sections_text,
+                    config=types.GenerateContentConfig(
+                        cached_content=cached_content.name,
+                        temperature=0.2,
+                        max_output_tokens=8192,
+                    ),
+                )
+            else:
+                # Fallback to non-cached mode (shouldn't happen in normal operation)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=sections_text,
+                    config=config,
+                )
 
-            # The model is constrained to JSON via response_mime_type,
-            # but we still defensively strip code fences if any slipped in.
-            text = (response.text or "").strip()
+            text = response.candidates[0].content.parts[0].text
             if text.startswith("```json"):
                 text = text[7:]
             if text.endswith("```"):
@@ -240,16 +269,26 @@ def analyze_section_batch(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze entities (batched)")
+    parser = argparse.ArgumentParser(
+        description="Analyze entities (dynamic batching with caching)"
+    )
     parser.add_argument("file_path", type=Path)
     parser.add_argument("city")
     parser.add_argument("state")
     parser.add_argument("--output-dir", type=Path, default=Path("output/analyzed"))
     parser.add_argument("--model", default=DEFAULT_MODEL_NAME)
     parser.add_argument(
-        "--batch-size", type=int, default=3, help="Number of sections per prompt"
+        "--max-entities-per-batch",
+        type=int,
+        default=6,
+        help="Maximum number of entities per batch (default: 6)",
     )
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable prompt caching (useful for testing)",
+    )
     args = parser.parse_args()
 
     data = load_data(args.file_path)
@@ -257,33 +296,69 @@ def main():
         data = data[: args.limit]
 
     client, config, model_name = setup_gemini_api(args.model)
+
+    # Create cached content for the static prompt prefix (unless disabled)
+    cached_content = None
+    if not args.no_cache:
+        print(f"Creating cached content for {args.city}, {args.state}...")
+        cached_content = create_cached_content(
+            client, model_name, args.city, args.state
+        )
+        print(f"Cache created: {cached_content.name}")
+
     results: List[EvaluatedEntities] = []
     batch: List[dict[str, Any]] = []
+    current_entity_count = 0
 
     output_file = args.output_dir / f"{args.file_path.stem}_batched.json"
 
-    with tqdm(total=len(data), desc="Analyzing batched entities") as pbar:
-        for section in data:
-            batch.append(section)
-            if len(batch) >= args.batch_size:
+    try:
+        with tqdm(total=len(data), desc="Analyzing batched entities") as pbar:
+            for section in data:
+                # Skip sections with no entities
+                entities = section.get("entities", [])
+                if not entities:
+                    pbar.update(1)
+                    continue
+
+                entity_count = len(entities)
+
+                # If adding this section would exceed the limit, process current batch first
+                if batch and (
+                    current_entity_count + entity_count > args.max_entities_per_batch
+                ):
+                    batch_results = analyze_section_batch(
+                        client, config, model_name, batch, cached_content
+                    )
+                    results.extend(batch_results)
+                    save_results(results, output_file)
+                    pbar.update(len(batch))
+                    batch.clear()
+                    current_entity_count = 0
+
+                # Add section to current batch
+                batch.append(section)
+                current_entity_count += entity_count
+
+            # Process leftover batch
+            if batch:
                 batch_results = analyze_section_batch(
-                    client, config, model_name, batch, args.city, args.state
+                    client, config, model_name, batch, cached_content
                 )
                 results.extend(batch_results)
-                batch.clear()
                 save_results(results, output_file)
-                pbar.update(args.batch_size)
+                pbar.update(len(batch))
 
-        # leftover batch
-        if batch:
-            batch_results = analyze_section_batch(
-                client, config, model_name, batch, args.city, args.state
-            )
-            results.extend(batch_results)
-            save_results(results, output_file)
-            pbar.update(len(batch))
+        print(f"\n✓ Saved batched results to {output_file}")
 
-    print(f"\n✓ Saved batched results to {output_file}")
+    finally:
+        # Clean up cached content
+        if cached_content:
+            try:
+                client.caches.delete(name=cached_content.name)
+                print(f"✓ Cache deleted: {cached_content.name}")
+            except Exception as e:
+                print(f"Warning: Could not delete cache: {e}")
 
 
 if __name__ == "__main__":
