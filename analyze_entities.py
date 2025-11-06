@@ -35,7 +35,7 @@ class Citation(BaseModel):
 class Entity(BaseModel):
     name: str
     type: EntityType
-    processed: ProcessStatus
+    processed: ProcessStatus | None
     exists: bool | None
     nonexistence_status: NonexistenceStatus | None
     citations: List[Citation]
