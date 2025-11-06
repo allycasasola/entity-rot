@@ -173,7 +173,6 @@ def analyze_section_batch(
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            breakpoint()
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
