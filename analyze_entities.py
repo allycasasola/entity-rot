@@ -73,17 +73,24 @@ Return ONLY a JSON array of this structure:
     "section_id": "...",
     "entities": [
       {{
-        "name": "...",
-        "type": "...",
-        "processed": "...",
+        "name": "entity name as string",
+        "type": "one of: organization, location, role, event, other",
+        "processed": "one of: skipped, processed",
         "exists": true/false/null,
-        "nonexistence_status": "... or null",
+        "nonexistence_status": "one of: abolished, merged, replaced, renamed, dormant, expired, defunct, OR null if it exists is true or null",
         "citations": [{{"url": "...", "quote": "..."}}],
-        "reasoning": "..."
+        "reasoning": "explanation as string"
       }}
     ]
   }}
 ]
+
+**Field Requirements:**
+- type: MUST be exactly one of: "organization", "location", "role", "event", "other"
+- processed: MUST be exactly "processed" (if you analyzed it) or "skipped" (if you skipped it)
+- exists: MUST be true, false, or null
+- nonexistence_status: MUST be one of "abolished", "merged", "replaced", "renamed", "dormant", "expired", "defunct", or null
+- citations: Array of objects with "url" and "quote" fields
 
 ---
 
@@ -233,9 +240,7 @@ def analyze_section_batch(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Analyze entities (dynamic batching)"
-    )
+    parser = argparse.ArgumentParser(description="Analyze entities (dynamic batching)")
     parser.add_argument("file_path", type=Path)
     parser.add_argument("city")
     parser.add_argument("state")
