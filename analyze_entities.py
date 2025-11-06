@@ -299,6 +299,9 @@ def main():
                 pbar.update(len(batch))
 
         print(f"\n✓ Saved batched results to {output_file}")
+    except Exception as e:
+        print(f"Error: {e}")
+        raise e
 
 
 if __name__ == "__main__":
