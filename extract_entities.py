@@ -5,17 +5,28 @@ import random
 import re
 import time
 
-from string import Template
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 from typing_extensions import Literal
 import duckdb
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from pydantic import BaseModel
 from tqdm import tqdm
 from dotenv import load_dotenv
 from datetime import datetime
+import logging
+
+from utils.cost_estimator import (
+    calculate_input_price_for_extraction,
+    calculate_output_price_for_extraction,
+    calculate_context_caching_price_for_extraction,
+)
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 
 EntityType = Literal["organization", "location", "role", "event", "other"]
 
@@ -52,15 +63,15 @@ class SectionRow:
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
 DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite-preview-09-2025"
 
-ENTITY_EXTRACTION_PROMPT = Template("""
-You are an expert at extracting *specific, properly named entities* from municipal code text. 
-Your goal is to identify only *properly named and distinct entities*, not generic categories or references.
+ENTITY_EXTRACTION_PROMPT = """
+You are working on a project to extract entities specific to the given jurisdiction and identify whether or not they still exist.
+You are specifically tasked with the first step of this project, which is to extract *specific, properly named entities* (not generic categories, nouns, or references) from municipal code text.
 
 ### Instructions
 
 Extract entities and classify each into one of the following types:
 - **organization**: Only include *specific* organizations or formally named bodies (e.g., "City of Aurora Planning and Zoning Commission", "Federal Emergency Management Agency").
-  Exclude generic terms like “city,” “board,” “department,” or “council” unless they appear as part of a *full proper name*.
+  Exclude generic terms like “city,” “board,” or “department,” unless they appear as part of a *full proper name*.
 - **location**: Only include *specific proper locations* (e.g., "1st Street East", "Aurora", "St. Louis County", "I-1 Industrial Park"). 
   Exclude generic or descriptive locations like “city,” “cemetery,” “school,” “public property,” “building,” or “hospital area.”
 - **role**: Only include *titled or uniquely identifying roles* (e.g., “City Administrator/Clerk-Treasurer,” “Planning and Zoning Official,” “State Commissioner of Public Safety”). 
@@ -86,36 +97,83 @@ Return **only** a JSON object with this exact structure:
   ]
 }
 
-### Text
-$content
-""")
+### Few-shot examples
+**Example 1:**
+Text: "Except for controlled breeding purposes, every female animal in heat shall be kept confined in a building or secure enclosure, or in a veterinary hospital or boarding kennel, in a manner that the female animal cannot come in contact with other animals."
+
+Output:
+{
+  "entities": []
+}
+
+Explanation: There are no specific entities in this text. Female animals, veterinary hospitals, and boarding kennels are all generic nouns, not specific proper-named entities.
+
+**Example 2:**
+Text: "(A)   Personal liability. The owner of premises on which a nuisance has been abated by the city shall be personally liable for the cost to the city of the abatement, including administrative costs. As soon as the work has been completed and the cost determined, the Deputy Clerk or other official shall prepare a bill for the cost and mail it to the owner. Thereupon the amount shall be immediately due and payable at the office of the Deputy Clerk.
+(B)   Assessment.
+    (1)   After notice and hearing as provided in M.S. § 429.061, as it may be amended from time to time, if the nuisance is a public health or safety hazard on private property, the accumulation of snow and ice on public sidewalks, the growth of weeds on private property or outside the traveled portion of streets, or unsound or insect-infected trees, the Deputy Clerk shall, on or before September 1 next following abatement of the nuisance, list the total unpaid charges along with all other charges as well as other charges for current services to be assessed under M.S. § 429.101, as it may be amended from time to time, against each separate lot or parcel to which the charges are attributable.
+    (2)   The City Council may then spread the charges against the property under that statute and other pertinent statutes for certification to the County Auditor and collection along with current taxes the following year or in annual installments, not exceeding 10, as the City Council may determine in each case.
+Penalty, see § 10.99"
+
+Output:
+{
+  "entities": [
+    {"name": "Deputy Clerk", "type": "role"},
+    {"name": "City Council", "type": "organization"},
+    {"name": "County Auditor", "type": "role"},
+  ]
+}
+
+Explanation: The Deputy Clerk, City Council, and County Auditor are all specific proper-named entities. M.S. § 429.061 and § 10.99 are excluded as they are legal references.
+
+**Example 3:**
+Text: "It is unlawful for any person to drive or operate a motorized vehicle, except a wheelchair powered by electricity and occupied by a handicapped person, on any public sidewalk or public property designated for use as a pedestrian walkway or bicycle trail, except when crossing the same for ingress and egress through a curb cut to property lying on the other side thereof."
+
+Output:
+{
+  "entities": []
+}  
+
+Explanation: There are no specific entities in this text. Motorized vehicles, wheelchair powered by electricity, and handicapped persons are all generic nouns, not specific proper-named entities. Public sidewalks, public property, pedestrian walkways, and bicycle trails are all generic locations, not specific proper-named entities.
+
+**Example 4:**
+Text: "  (A)   Proof. It is prima facie evidence of exhibition driving when a motor vehicle stops, starts, accelerates, decelerates or turns at an unnecessary rate of speed so as to cause tires to squeal, gears to grind, soil to be thrown, engine backfire, fishtailing or skidding or as to two-wheeled motor vehicles, the front wheel to lost contact with the ground or roadway surface.
+   (B)   Unlawful act. No person shall do any exhibition driving on any street, parking lot or other public or private property, except when an emergency creates necessity for such operation to prevent injury to persons or damage to property; provided, that this section shall not apply to driving on a racetrack. For the purposes of this section, a RACETRACK means any track or premises whereon motorized vehicles legally compete in a race or timed contest for an audience, the members of which have directly or indirectly paid a consideration for admission.
+   (C)   Violation. Any person violating this section shall be guilty of a petty misdemeanor subject to a fine as set forth in § 10.99 and the costs of prosecution.
+Penalty, see § 10.99"
+
+Output:
+{
+  "entities": []
+}
+
+Explanation: There are no specific entities in this text. Exhibition driving, motorized vehicless,  and racetracks are all generic nouns, not specific proper-named entities. § 10.99 is excluded as it is a legal reference.
+
+**Example 5:**
+Text: "(A)   Policy and purpose. The city has determined that the health of oak and elm trees is threatened by fatal diseases known as oak wilt and Dutch elm disease. It has further determined that the loss of oak and elm trees located on public and private property would substantially depreciate the value of property and impair the safety, good order, general welfare and convenience of the public. It is declared to be the intention of the Council to control and prevent the spread of these diseases, and provide for the removal of dead or diseased trees, as nuisances.
+(B)   Definitions.    For the purpose of this section, the following definitions shall apply unless the context clearly indicates or requires a different meaning.
+    NUISANCE. 
+         (a)   Any living or standing tree infected to any degree with a shade tree disease; or
+         (b)   Any logs, branches, stumps or other parts of any dead or dying tree, so infected, unless the parts have been fully burned or treated under the direction of the Tree Inspector.
+    SHADE TREE DISEASE. Dutch elm disease or oak wilt disease.
+    TREE INSPECTOR. The Public Works Director, or any other employee of the city as the Council may designate and who shall thereafter qualify.
+(C)   Scope and adoption by reference. M.S. §§ 89.001 et seq., as it may be amended from time to time, is hereby adopted by reference, together with the rules and regulations of the State Commissioner of Agriculture relating to shade tree diseases; provided, that this section shall supersede those statutes, rules and regulations only to the extent of inconsistencies.
+(D)   Stockpiling of elm wood. The stockpiling of bark-bearing elmwood shall be permitted during the period from September 15 through April 1 of the following year if a permit has been issued therefor. Any wood not utilized by April 1 must then be removed and disposed of as provided by this section and the regulations incorporated thereby. Prior to April 1 of each year, the Tree Inspector shall inspect all public and private properties for elmwood logs or stumps that could serve as bark beetle breeding sites, and require by April 1, removal or debarking of all wood, logs or stumps to be retained."
+
+Output:
+{
+  "entities": [
+    {"name": "Council", "type": "organization"},
+    {"name": "Tree Inspector", "type": "role"},
+    {"name": "Public Works Director", "type": "role"},
+    {"name": "State Commissioner of Agriculture", "type": "role"},
+  ]
+}
+
+Explanation: The Council, Tree Inspector, Public Works Director, and State Commissioner of Agriculture are all specific proper-named entities. M.S. §§ 89.001 et seq. is excluded as it is a legal reference.
+"""
 
 load_dotenv()
-
-
-def setup_gemini_api(model_name: str) -> genai.GenerativeModel:
-    """Initialize and configure the Gemini API with JSON-mode."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "GEMINI_API_KEY environment variable not set. "
-            "Please set it with: export GEMINI_API_KEY='your-api-key'"
-        )
-    genai.configure(api_key=api_key)
-
-    generation_config = {
-        "temperature": 0.1,
-        "top_p": 0.95,
-        "top_k": 40,
-        "max_output_tokens": 8192,
-        # Force the model to emit valid JSON (no code fences)
-        "response_mime_type": "application/json",
-    }
-
-    return genai.GenerativeModel(
-        model_name=model_name,
-        generation_config=generation_config,
-    )
 
 
 def _connect_duckdb() -> duckdb.DuckDBPyConnection:
@@ -214,17 +272,53 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
 
 
 def extract_entities_from_content(
-    model: genai.GenerativeModel,
+    cache: types.CachedContent,
+    client: genai.Client,
+    model_name: str,
     content: str,
     section_id: str,
     section_heading: Optional[str] = None,
     citation: Optional[str] = None,
     hierarchy_path: Optional[str] = None,
+    debug: bool = False,
 ) -> ExtractedEntities:
     """Extract entities using Gemini in JSON-mode with retries."""
-    prompt = ENTITY_EXTRACTION_PROMPT.substitute(content=content)
+
+    # The prompt is just the content since ENTITY_EXTRACTION_PROMPT is in the cached system instruction
+    prompt = content
+
+    if debug:
+        logger.debug("=" * 80)
+        logger.debug(f"PROCESSING SECTION: {section_id}")
+        logger.debug("=" * 80)
+        logger.debug(f"Section Heading: {section_heading}")
+        logger.debug(f"Citation: {citation}")
+        logger.debug(f"Hierarchy Path: {hierarchy_path}")
+        logger.debug("-" * 80)
+        logger.debug("CONTENT SENT TO LLM:")
+        logger.debug("-" * 80)
+        logger.debug(content)
+        logger.debug("=" * 80)
+
     try:
-        resp = _with_retries(lambda: model.generate_content(prompt))
+        resp = _with_retries(
+            lambda: client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    cached_content=cache.name,
+                    temperature=0.1,
+                    top_p=0.95,
+                    top_k=40,
+                    max_output_tokens=8192,
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+        )
+
+        if debug:
+            print(resp.usage_metadata)
 
         # Clean response text
         response_text = resp.text.strip()
@@ -310,13 +404,15 @@ def save_results(results: List[ExtractedEntities], output_path: Path) -> None:
 
 def process_city(
     city_name: str,
-    model: genai.GenerativeModel,
+    client: genai.Client,
+    model_name: str,
     output_dir: Path,
     parquet_path: Path,
     yes: bool,
     resume: bool,
     batch_size: int = 1000,
     autosave_every: int = 25,
+    debug: bool = False,
 ) -> None:
     print(f"\n{'='*80}")
     print(f"Processing city: {city_name}")
@@ -329,6 +425,16 @@ def process_city(
         print(f"No data found for city: {city_name}")
         return
     print(f"Found {n_sections} sections for {city_name} with {n_words} words")
+
+    # Calculate costs
+    estimated_cost = (
+        calculate_input_price_for_extraction(model_name, n_words)
+        + calculate_output_price_for_extraction(model_name, n_sections)
+        + calculate_context_caching_price_for_extraction(
+            model_name, ENTITY_EXTRACTION_PROMPT
+        )
+    )
+    print(f"Estimated cost: {estimated_cost}")
 
     # Confirm if interactive is desired
     if not yes:
@@ -376,18 +482,30 @@ def process_city(
         f"\nProcessing {to_process} sections (skipping {len(processed_section_ids)} already done)..."
     )
 
+    # Set up context caching
+    cache = client.caches.create(
+        model=model_name,
+        config=types.CreateCachedContentConfig(
+            display_name="extraction_instruction",
+            system_instruction=ENTITY_EXTRACTION_PROMPT,
+        ),
+    )
+
     with tqdm(total=to_process, desc=f"Extracting entities from {city_name}") as pbar:
         for row in rows_iter:
             if row.section_id in processed_section_ids:
                 continue
 
             extracted = extract_entities_from_content(
-                model=model,
+                cache=cache,
+                client=client,
+                model_name=model_name,
                 content=row.content,
                 section_id=row.section_id,
                 section_heading=row.section_heading,
                 citation=row.citation,
                 hierarchy_path=row.hierarchy_path,
+                debug=debug,
             )
             results.append(extracted)
             processed_section_ids.add(row.section_id)
@@ -449,30 +567,32 @@ def main():
         default=25,
         help="Autosave after this many newly processed sections (default: 25)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Enable debugging logging",
+    )
 
     args = parser.parse_args()
 
-    # Setup Gemini API
-    print("Initializing Gemini API...")
-    try:
-        model = setup_gemini_api(args.model)
-        print(f"✓ Using model: {args.model}")
-    except Exception as e:
-        print(f"Error setting up Gemini API: {e}")
-        return
+    # Set up client
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     # Process each city
     for city_name in args.cities:
         try:
             process_city(
                 city_name=city_name,
-                model=model,
+                client=client,
+                model_name=args.model,
                 output_dir=args.output_dir,
                 parquet_path=args.parquet_path,
                 yes=args.yes,
                 resume=args.resume,
                 batch_size=args.batch_size,
                 autosave_every=args.autosave_every,
+                debug=args.debug,
             )
         except Exception as e:
             print(f"\nError processing city {city_name}: {e}")

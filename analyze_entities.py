@@ -118,7 +118,7 @@ def setup_gemini_api(model_name: str):
     config = types.GenerateContentConfig(
         tools=[grounding_tool],
         temperature=0.2,
-        max_output_tokens=8192,
+        max_output_tokens=5,
     )
 
     return client, config, model_name
