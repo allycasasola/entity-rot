@@ -23,6 +23,15 @@ print(f"Total rows in dataset: {count:,}")
 print()
 
 print("=" * 80)
+print("TOTAL WORD TOKENS:")
+print("=" * 80)
+total_tokens = conn.execute(
+    f"SELECT SUM(word_tokens_approx) as total FROM '{PATH_TO_PARQUET_FILE}'"
+).fetchone()[0]
+print(f"Total word_tokens_approx: {total_tokens:,}")
+print()
+
+print("=" * 80)
 print("FIRST 5 ROWS WITH FULL CONTENT:")
 print("=" * 80)
 
