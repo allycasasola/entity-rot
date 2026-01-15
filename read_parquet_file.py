@@ -1,7 +1,7 @@
 import pandas as pd
 import duckdb
 
-PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
+PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/city_codes/city_ordinances_shuffled_no_prior_run.parquet"
 
 # Use DuckDB to efficiently read just the first few rows without loading entire file
 conn = duckdb.connect()
