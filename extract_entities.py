@@ -61,11 +61,11 @@ class SectionRow:
 
 
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
-DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite-preview-09-2025"
+DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite"
 
 ENTITY_EXTRACTION_PROMPT = """
 You are working on a project to extract entities specific to the given jurisdiction and identify whether or not they still exist.
-You are specifically tasked with the first step of this project, which is to extract *specific, properly named entities* (not generic categories, nouns, or references) from municipal code text.
+You are specifically tasked with the first step of this project, which is to extract *specific, proper-named entities* (not generic categories, nouns, or references) from municipal code text.
 
 ### Instructions
 
