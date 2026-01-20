@@ -29,23 +29,33 @@ total_tokens = conn.execute(
     f"SELECT SUM(word_tokens_approx) as total FROM '{PATH_TO_PARQUET_FILE}'"
 ).fetchone()[0]
 print(f"Total word_tokens_approx: {total_tokens:,}")
-print()
-
-print("=" * 80)
-print("FIRST 5 ROWS WITH FULL CONTENT:")
 print("=" * 80)
 
-# Query just the first 5 rows efficiently with DuckDB
-df = conn.execute(f"SELECT * FROM '{PATH_TO_PARQUET_FILE}' LIMIT 5").df()
+# Print out all city_slug values
+cities = conn.execute(f"SELECT DISTINCT city_slug FROM '{PATH_TO_PARQUET_FILE}'").fetchall()
+for city in cities:
+    print(city[0])
 
-# Display each row with full content
-for idx, row in df.iterrows():
-    print(f"\n{'=' * 80}")
-    print(f"ROW {idx}")
-    print("=" * 80)
-    for col in df.columns:
-        print(f"\n{col}:")
-        print(f"  {row[col]}")
-    print()
+# Print out all jurisdiction_name values
+jurisdictions = conn.execute(f"SELECT DISTINCT jurisdiction_name FROM '{PATH_TO_PARQUET_FILE}'").fetchall()
+for jurisdiction in jurisdictions:
+    print(jurisdiction[0])
+
+# print("FIRST 5 ROWS WITH FULL CONTENT:")
+# print("=" * 80)
+
+
+# # Query just the first 5 rows efficiently with DuckDB
+# df = conn.execute(f"SELECT * FROM '{PATH_TO_PARQUET_FILE}' LIMIT 5").df()
+
+# # Display each row with full content
+# for idx, row in df.iterrows():
+#     print(f"\n{'=' * 80}")
+#     print(f"ROW {idx}")
+#     print("=" * 80)
+#     for col in df.columns:
+#         print(f"\n{col}:")
+#         print(f"  {row[col]}")
+#     print()
 
 conn.close()
