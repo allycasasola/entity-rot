@@ -1,7 +1,9 @@
 import pandas as pd
 import duckdb
+import csv
 
-PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/city_codes/city_ordinances_shuffled_no_prior_run.parquet"
+PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/allyc/city_ordinances.parquet"
+OUTPUT_CSV = "cities_and_jurisdictions.csv"
 
 # Use DuckDB to efficiently read just the first few rows without loading entire file
 conn = duckdb.connect()
@@ -31,21 +33,32 @@ total_tokens = conn.execute(
 print(f"Total word_tokens_approx: {total_tokens:,}")
 print("=" * 80)
 
-# Print out all city_slug values
-cities = conn.execute(f"SELECT DISTINCT city_slug FROM '{PATH_TO_PARQUET_FILE}'").fetchall()
-for city in cities:
-    print(city[0])
+print("=" * 80)
+print("EXTRACTING CITIES AND JURISDICTIONS:")
+print("=" * 80)
 
-# Print out all jurisdiction_name values
-jurisdictions = conn.execute(f"SELECT DISTINCT jurisdiction_name FROM '{PATH_TO_PARQUET_FILE}'").fetchall()
-for jurisdiction in jurisdictions:
-    print(jurisdiction[0])
+# Get all unique combinations of city_slug and jurisdiction_name
+query = f"""
+    SELECT DISTINCT city_slug, jurisdiction_name 
+    FROM '{PATH_TO_PARQUET_FILE}' 
+    ORDER BY city_slug, jurisdiction_name
+"""
+results_df = conn.execute(query).df()
 
-df = conn.execute(f"SELECT * FROM '{PATH_TO_PARQUET_FILE}' LIMIT 100").df()
-for idx, row in df.iterrows():
-    print(row["city_slug"])
-    print(row["jurisdiction_name"])
-    print("-" * 80)
+# Save to CSV
+results_df.to_csv(OUTPUT_CSV, index=False)
+print(f"✓ Saved {len(results_df)} entries to {OUTPUT_CSV}")
+print()
+
+# Also print summary
+print("Sample entries:")
+print(results_df.head(10).to_string(index=False))
+print()
+if len(results_df) > 10:
+    print(f"... and {len(results_df) - 10} more entries")
+    print()
+
+
 
 # print("FIRST 5 ROWS WITH FULL CONTENT:")
 # print("=" * 80)
