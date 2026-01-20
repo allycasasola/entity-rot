@@ -60,7 +60,7 @@ class SectionRow:
     chunk_ids: Optional[str]
 
 
-DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/dbateyko/municipal_codes/data/output/municode_sections.parquet"
+DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/allyc/city_ordinances.parquet"
 DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite"
 
 ENTITY_EXTRACTION_PROMPT = """
