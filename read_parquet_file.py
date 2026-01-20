@@ -39,9 +39,9 @@ print("=" * 80)
 
 # Get all unique combinations of city_slug and jurisdiction_name
 query = f"""
-    SELECT DISTINCT city_slug, jurisdiction_name 
+    SELECT DISTINCT city_slug, jurisdiction_name, state, state_code
     FROM '{PATH_TO_PARQUET_FILE}' 
-    ORDER BY city_slug, jurisdiction_name
+    ORDER BY city_slug, jurisdiction_name, state, state_code
 """
 results_df = conn.execute(query).df()
 
@@ -57,7 +57,6 @@ print()
 if len(results_df) > 10:
     print(f"... and {len(results_df) - 10} more entries")
     print()
-
 
 
 # print("FIRST 5 ROWS WITH FULL CONTENT:")
