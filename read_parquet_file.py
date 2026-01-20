@@ -41,6 +41,12 @@ jurisdictions = conn.execute(f"SELECT DISTINCT jurisdiction_name FROM '{PATH_TO_
 for jurisdiction in jurisdictions:
     print(jurisdiction[0])
 
+df = conn.execute(f"SELECT * FROM '{PATH_TO_PARQUET_FILE}' LIMIT 100").df()
+for idx, row in df.iterrows():
+    print(row["city_slug"])
+    print(row["jurisdiction_name"])
+    print("-" * 80)
+
 # print("FIRST 5 ROWS WITH FULL CONTENT:")
 # print("=" * 80)
 
