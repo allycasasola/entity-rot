@@ -49,7 +49,9 @@ class ExtractedEntities(BaseModel):
 
 @dataclass
 class SectionRow:
-    city: str
+    city_slug: str
+    jurisdiction_name: str
+    state_code: str
     source_file: str
     section_id: str
     section_heading: Optional[str]
@@ -58,6 +60,9 @@ class SectionRow:
     content: str
     token_count: Optional[int]
     chunk_ids: Optional[str]
+
+
+# TODO: Add more varied examples of entities and non-entities to the prompt. Right now, the prompt only includes sections from Aurora, MN.
 
 
 DEFAULT_PATH_TO_PARQUET_FILE = "/oak/stanford/groups/deho/allyc/city_ordinances.parquet"
@@ -180,22 +185,27 @@ def _connect_duckdb() -> duckdb.DuckDBPyConnection:
     return duckdb.connect()
 
 
-def count_city_sections(parquet_path: Path, city_name: str) -> int:
+def count_city_sections(
+    parquet_path: Path, city_slug: str, jurisdiction_name: str, state_code: str
+) -> int:
     conn = _connect_duckdb()
     try:
         return conn.execute(
-            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city = ?", [city_name]
+            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city_slug = ? AND jurisdiction_name = ? AND state_code = ?",
+            [city_slug, jurisdiction_name, state_code],
         ).fetchone()[0]
     finally:
         conn.close()
 
 
-def count_city_words(parquet_path: Path, city_name: str) -> int:
+def count_city_words(
+    parquet_path: Path, city_slug: str, jurisdiction_name: str, state_code: str
+) -> int:
     conn = _connect_duckdb()
     try:
         df = conn.execute(
-            f"SELECT content FROM '{parquet_path}' WHERE city = ?",
-            [city_name],
+            f"SELECT content FROM '{parquet_path}' WHERE city_slug = ? AND jurisdiction_name = ? AND state_code = ?",
+            [city_slug, jurisdiction_name, state_code],
         ).df()
         return sum(len(str(c).split()) for c in df["content"].dropna())
     finally:
@@ -204,27 +214,31 @@ def count_city_words(parquet_path: Path, city_name: str) -> int:
 
 def iter_city_rows(
     parquet_path: Path,
-    city_name: str,
+    city_slug: str,
+    jurisdiction_name: str,
+    state_code: str,
     batch_size: int = 1000,
 ) -> Iterable[SectionRow]:
     """Stream rows for a city in batches to avoid memory spikes."""
     conn = _connect_duckdb()
     try:
         total = conn.execute(
-            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city = ?", [city_name]
+            f"SELECT COUNT(*) FROM '{parquet_path}' WHERE city_slug = ? AND jurisdiction_name = ? AND state_code = ?",
+            [city_slug, jurisdiction_name, state_code],
         ).fetchone()[0]
 
         offset = 0
         while offset < total:
             df = conn.execute(
                 f"""
-                SELECT city, source_file, section_id, section_heading, citation,
+                SELECT city_slug, jurisdiction_name, state_code, source_file, 
+                       section_id, section_heading, citation,
                        hierarchy_path, content, token_count, chunk_ids
                 FROM '{parquet_path}'
-                WHERE city = ?
+                WHERE city_slug = ? AND jurisdiction_name = ? AND state_code = ?
                 LIMIT ? OFFSET ?
                 """,
-                [city_name, batch_size, offset],
+                [city_slug, jurisdiction_name, state_code, batch_size, offset],
             ).df()
 
             for rec in df.to_dict("records"):
@@ -403,7 +417,9 @@ def save_results(results: List[ExtractedEntities], output_path: Path) -> None:
 
 
 def process_city(
-    city_name: str,
+    city_slug: str,
+    jurisdiction_name: str,
+    state_code: str,
     client: genai.Client,
     model_name: str,
     output_dir: Path,
@@ -415,16 +431,18 @@ def process_city(
     debug: bool = False,
 ) -> None:
     print(f"\n{'='*80}")
-    print(f"Processing city: {city_name}")
+    print(f"Processing: {jurisdiction_name} ({city_slug}), {state_code}")
     print("=" * 80)
 
     # Determine work size
-    n_sections = count_city_sections(parquet_path, city_name)
-    n_words = count_city_words(parquet_path, city_name)
+    n_sections = count_city_sections(
+        parquet_path, city_slug, jurisdiction_name, state_code
+    )
+    n_words = count_city_words(parquet_path, city_slug, jurisdiction_name, state_code)
     if n_sections == 0:
-        print(f"No data found for city: {city_name}")
+        print(f"No data found for: {jurisdiction_name} ({city_slug}), {state_code}")
         return
-    print(f"Found {n_sections} sections for {city_name} with {n_words} words")
+    print(f"Found {n_sections} sections with {n_words} words")
 
     # Calculate costs
     estimated_cost = (
@@ -443,10 +461,10 @@ def process_city(
             print("Skipping this city.")
             return
 
-    # Output file
+    # Output file - use city_slug and state_code for uniqueness
     output_file = (
         output_dir
-        / f"{city_name.lower().replace(' ', '_')}_entities_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        / f"{city_slug}_{state_code}_entities_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     )
 
     # Resume (optional)
@@ -472,7 +490,9 @@ def process_city(
 
     # Stream rows, skipping already processed
     processed_since_save = 0
-    rows_iter = iter_city_rows(parquet_path, city_name, batch_size=batch_size)
+    rows_iter = iter_city_rows(
+        parquet_path, city_slug, jurisdiction_name, state_code, batch_size=batch_size
+    )
     to_process = n_sections - len(processed_section_ids)
     if to_process <= 0:
         print("All sections already processed!")
@@ -491,7 +511,10 @@ def process_city(
         ),
     )
 
-    with tqdm(total=to_process, desc=f"Extracting entities from {city_name}") as pbar:
+    with tqdm(
+        total=to_process,
+        desc=f"Extracting entities from {jurisdiction_name}, {state_code}",
+    ) as pbar:
         for row in rows_iter:
             if row.section_id in processed_section_ids:
                 continue
@@ -519,14 +542,20 @@ def process_city(
     # Final save
     save_results(results, output_file)
     print(f"\n✓ Results saved to: {output_file}")
-    print(f"✓ Processed {len(results)} total sections for {city_name}")
+    print(
+        f"✓ Processed {len(results)} total sections for {jurisdiction_name} ({city_slug}), {state_code}"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Extract entities from municipal code sections using Gemini API"
     )
-    parser.add_argument("cities", nargs="+", help="One or more city names to process")
+    parser.add_argument(
+        "cities",
+        nargs="+",
+        help="One or more cities to process in format 'city_slug:jurisdiction_name:state_code' (e.g., 'aurora-co:Aurora:CO', 'minneapolis-mn:Minneapolis:MN')",
+    )
 
     parser.add_argument(
         "--output-dir",
@@ -580,10 +609,22 @@ def main():
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     # Process each city
-    for city_name in args.cities:
+    for city_spec in args.cities:
         try:
+            # Parse city specification in format: city_slug:jurisdiction_name:state_code
+            parts = city_spec.split(":")
+            if len(parts) != 3:
+                print(f"\nError: Invalid city specification '{city_spec}'")
+                print("Expected format: 'city_slug:jurisdiction_name:state_code'")
+                print("Example: 'aurora-co:Aurora:CO'")
+                continue
+
+            city_slug, jurisdiction_name, state_code = parts
+
             process_city(
-                city_name=city_name,
+                city_slug=city_slug,
+                jurisdiction_name=jurisdiction_name,
+                state_code=state_code,
                 client=client,
                 model_name=args.model,
                 output_dir=args.output_dir,
@@ -595,7 +636,10 @@ def main():
                 debug=args.debug,
             )
         except Exception as e:
-            print(f"\nError processing city {city_name}: {e}")
+            print(f"\nError processing city {city_spec}: {e}")
+            import traceback
+
+            traceback.print_exc()
             continue
 
     print("\n" + "=" * 80)
