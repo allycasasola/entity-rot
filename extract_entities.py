@@ -40,26 +40,29 @@ class ExtractedEntities(BaseModel):
     """Schema for extracted entities from a section."""
 
     entities: List[Entity]
-    section_id: str  # always present now
+    node_id: str  # always present now
     section_heading: Optional[str] = None
-    citation: Optional[str] = None
     hierarchy_path: Optional[str] = None
     content: Optional[str] = None
 
 
 @dataclass
 class SectionRow:
+    source: str
+    source_format: Optional[str]
     city_slug: str
     jurisdiction_name: str
+    state: str
     state_code: str
-    source_file: str
-    section_id: str
+    source_file: Optional[str]
+    node_id: str
     section_heading: Optional[str]
-    citation: Optional[str]
     hierarchy_path: Optional[str]
     content: str
-    token_count: Optional[int]
-    chunk_ids: Optional[str]
+    tiktoken: Optional[int]
+    word_tokens_approx: Optional[int]
+    tfidf_score: Optional[float]
+    tfidf_label: Optional[str]
 
 
 # TODO: Add more varied examples of entities and non-entities to the prompt. Right now, the prompt only includes sections from Aurora, MN.
@@ -231,9 +234,10 @@ def iter_city_rows(
         while offset < total:
             df = conn.execute(
                 f"""
-                SELECT city_slug, jurisdiction_name, state_code, source_file, 
-                       section_id, section_heading, citation,
-                       hierarchy_path, content, token_count, chunk_ids
+                SELECT source, source_format, city_slug, jurisdiction_name, state, 
+                       state_code, source_file, node_id, section_heading,
+                       hierarchy_path, content, tiktoken, word_tokens_approx,
+                       tfidf_score, tfidf_label
                 FROM '{parquet_path}'
                 WHERE city_slug = ? AND jurisdiction_name = ? AND state_code = ?
                 LIMIT ? OFFSET ?
@@ -290,9 +294,8 @@ def extract_entities_from_content(
     client: genai.Client,
     model_name: str,
     content: str,
-    section_id: str,
+    node_id: str,
     section_heading: Optional[str] = None,
-    citation: Optional[str] = None,
     hierarchy_path: Optional[str] = None,
     debug: bool = False,
 ) -> ExtractedEntities:
@@ -303,10 +306,9 @@ def extract_entities_from_content(
 
     if debug:
         logger.debug("=" * 80)
-        logger.debug(f"PROCESSING SECTION: {section_id}")
+        logger.debug(f"PROCESSING SECTION: {node_id}")
         logger.debug("=" * 80)
         logger.debug(f"Section Heading: {section_heading}")
-        logger.debug(f"Citation: {citation}")
         logger.debug(f"Hierarchy Path: {hierarchy_path}")
         logger.debug("-" * 80)
         logger.debug("CONTENT SENT TO LLM:")
@@ -384,21 +386,19 @@ def extract_entities_from_content(
 
         return ExtractedEntities(
             entities=entity_objects,
-            section_id=section_id,
+            node_id=node_id,
             section_heading=section_heading,
-            citation=citation,
             hierarchy_path=hierarchy_path,
             content=content,
         )
     except Exception as e:
-        print(f"\nError processing section {section_id}: {e}")
+        print(f"\nError processing section {node_id}: {e}")
         if "resp" in locals():
             print(f"Raw response (first 500 chars): {resp.text[:500]}")
         return ExtractedEntities(
             entities=[],
-            section_id=section_id,
+            node_id=node_id,
             section_heading=section_heading,
-            citation=citation,
             hierarchy_path=hierarchy_path,
             content=content,
         )
@@ -469,7 +469,7 @@ def process_city(
 
     # Resume (optional)
     results: List[ExtractedEntities] = []
-    processed_section_ids = set()
+    processed_node_ids = set()
 
     if output_file.exists() and (
         resume
@@ -483,7 +483,7 @@ def process_city(
     ):
         try:
             results = load_existing_results(output_file)
-            processed_section_ids = {r.section_id for r in results}
+            processed_node_ids = {r.node_id for r in results}
             print(f"Loaded {len(results)} existing results (will skip these sections).")
         except Exception as e:
             print(f"Failed to load existing results (continuing fresh): {e}")
@@ -493,13 +493,13 @@ def process_city(
     rows_iter = iter_city_rows(
         parquet_path, city_slug, jurisdiction_name, state_code, batch_size=batch_size
     )
-    to_process = n_sections - len(processed_section_ids)
+    to_process = n_sections - len(processed_node_ids)
     if to_process <= 0:
         print("All sections already processed!")
         return
 
     print(
-        f"\nProcessing {to_process} sections (skipping {len(processed_section_ids)} already done)..."
+        f"\nProcessing {to_process} sections (skipping {len(processed_node_ids)} already done)..."
     )
 
     # Set up context caching
@@ -516,7 +516,7 @@ def process_city(
         desc=f"Extracting entities from {jurisdiction_name}, {state_code}",
     ) as pbar:
         for row in rows_iter:
-            if row.section_id in processed_section_ids:
+            if row.node_id in processed_node_ids:
                 continue
 
             extracted = extract_entities_from_content(
@@ -524,14 +524,13 @@ def process_city(
                 client=client,
                 model_name=model_name,
                 content=row.content,
-                section_id=row.section_id,
+                node_id=row.node_id,
                 section_heading=row.section_heading,
-                citation=row.citation,
                 hierarchy_path=row.hierarchy_path,
                 debug=debug,
             )
             results.append(extracted)
-            processed_section_ids.add(row.section_id)
+            processed_node_ids.add(row.node_id)
             processed_since_save += 1
             pbar.update(1)
 
