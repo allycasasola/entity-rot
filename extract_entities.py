@@ -24,7 +24,9 @@ from utils.cost_estimator import (
     calculate_context_caching_price_for_extraction,
 )
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.WARNING
+)  # Changed from DEBUG to WARNING for cleaner output
 logger = logging.getLogger(__name__)
 
 
