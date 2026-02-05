@@ -1,47 +1,90 @@
 # Utility functions for estimating costs of LLM calls
+from pydantic import BaseModel
 
-def calculate_input_price_for_extraction(model_name: str, n_city_words: int) -> float:
-    """Calculate the price of input tokens for a given model for the extract_entities task."""
-    if model_name in ["gemini-2.5-flash-lite-preview-09-2025", "gemini-2.5-flash-lite"]:
-        # Costs $0.10 per 1M tokens
-        # Assume 1.3 tokens per word
-        return n_city_words * 1.3 * (0.10 / 1_000_000)
-    elif model_name == "gemini-2.5-flash":
-        # Costs $0.075 per 1M tokens (for prompts <= 128k)
-        # Assume 1.3 tokens per word
-        return n_city_words * 1.3 * (0.075 / 1_000_000)
-    else:
-        # Default fallback estimate
-        return n_city_words * 1.3 * (0.10 / 1_000_000)
 
-def calculate_output_price_for_extraction(model_name: str, num_sections: int) -> float:
-    """Calculate the price of output tokens for a given model for the extract_entities task.
-    Provides a lofty upper bound on the cost, as it assumes each section generates at most 10 entities."""
-    if model_name in ["gemini-2.5-flash-lite-preview-09-2025", "gemini-2.5-flash-lite"]:
-        # Suppose each section generates at most 10 entities (which is about 150 tokens)
-        # Costs $0.40 per 1M tokens
-        return num_sections * 150 * (0.40 / 1_000_000)
-    elif model_name == "gemini-2.5-flash":
-        # Costs $0.30 per 1M tokens (for prompts <= 128k)
-        return num_sections * 150 * (0.30 / 1_000_000)
-    else:
-        # Default fallback estimate
-        return num_sections * 150 * (0.40 / 1_000_000)
+class TokenUsage(BaseModel):
+    cached_content_token_count: int = 0
+    prompt_token_count: int = 0
+    thoughts_token_count: int = 0
+    candidates_token_count: int = 0
 
-def calculate_context_caching_price_for_extraction(model_name: str, instructions: str) -> float:
-    """Calculate the price of context caching for a given model for the extract_entities task."""
-    if model_name in ["gemini-2.5-flash-lite-preview-09-2025", "gemini-2.5-flash-lite"]:
-        # Costs $0.01 per 1M tokens + $1.00 per 1M tokens per hour for storage
-        # Assume 1.3 tokens per word
-        # Assume it takes 1 hour to run the extraction task? (TO-DO: Not really sure about this estimate)
-        num_tokens = len(instructions.split()) * 1.3
-        return num_tokens * (0.01 / 1_000_000) + num_tokens * (1.00 / 1_000_000)
-    elif model_name == "gemini-2.5-flash":
-        # Costs $0.01875 per 1M tokens + $1.00 per 1M tokens per hour for storage
-        num_tokens = len(instructions.split()) * 1.3
-        return num_tokens * (0.01875 / 1_000_000) + num_tokens * (1.00 / 1_000_000)
-    else:
-        # Default fallback estimate
-        num_tokens = len(instructions.split()) * 1.3
-        return num_tokens * (0.01 / 1_000_000) + num_tokens * (1.00 / 1_000_000)
 
+class Cost(BaseModel):
+    cached_content_cost: float = 0.0
+    prompt_cost: float = 0.0
+    thoughts_cost: float = 0.0
+    candidates_cost: float = 0.0
+
+    @property
+    def total_cost(self) -> float:
+        return self.cached_content_cost + self.prompt_cost + self.thoughts_cost + self.candidates_cost
+
+
+# Pricing constants (per 1M tokens)
+PRICING = {
+    "gemini-2.5-flash-lite": {
+        "input": 0.10,
+        "output": 0.40,
+        "cache_input": 0.01,
+        "cache_storage_per_hour": 1.00,
+    },
+    "gemini-2.5-flash-lite-preview-09-2025": {
+        "input": 0.10,
+        "output": 0.40,
+        "cache_input": 0.01,
+        "cache_storage_per_hour": 1.00,
+    },
+    "gemini-2.5-flash": {
+        "input": 0.30,
+        "output": 0.30,
+        "cache_input": 0.01875,
+        "cache_storage_per_hour": 1.00,
+    },
+}
+
+DEFAULT_PRICING = PRICING["gemini-2.5-flash-lite"]
+
+
+def get_pricing(model_name: str) -> dict:
+    """Get pricing for a model, falling back to default if not found."""
+    return PRICING.get(model_name, DEFAULT_PRICING)
+
+
+def estimated_token_usage_for_extraction(
+    model_name: str, n_city_words: int, n_sections: int, instructions: str
+) -> TokenUsage:
+    """Estimate total token usage for extraction task."""
+    # System instruction tokens (counted once due to Gemini's automatic caching)
+    instruction_tokens = int(len(instructions.split()) * 1.4)
+
+    # Assume 1.4 tokens per word for content input
+    content_tokens = int(n_city_words * 1.4)
+
+    # Total prompt tokens = instruction tokens (once) + content tokens
+    prompt_tokens = instruction_tokens + content_tokens
+
+    # Assume each section generates about 150 output tokens (10 entities)
+    output_tokens = n_sections * 150
+
+    return TokenUsage(
+        cached_content_token_count=0,  # Not using caching
+        prompt_token_count=prompt_tokens,
+        thoughts_token_count=0,
+        candidates_token_count=output_tokens,
+    )
+
+
+def cost_from_token_usage(model_name: str, token_usage: TokenUsage) -> Cost:
+    """Calculate cost from token usage.
+
+    Note: cached_content_cost only uses the cache_input rate (cost per cached token read).
+    Storage costs are charged per hour separately, not per token.
+    """
+    pricing = get_pricing(model_name)
+
+    return Cost(
+        cached_content_cost=token_usage.cached_content_token_count * pricing["cache_input"] / 1_000_000,
+        prompt_cost=token_usage.prompt_token_count * pricing["input"] / 1_000_000,
+        thoughts_cost=token_usage.thoughts_token_count * pricing["output"] / 1_000_000,
+        candidates_cost=token_usage.candidates_token_count * pricing["output"] / 1_000_000,
+    )

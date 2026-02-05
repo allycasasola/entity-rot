@@ -134,3 +134,5 @@ dmypy.json
 Thumbs.db
 
 output/
+outputs/
+data/
